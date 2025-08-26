@@ -7,30 +7,44 @@ function App() {
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
 
-  // Parse WhatsApp exported lines
-  const parseChat = (text) => {
+  // Parse WhatsApp exported lines with progress
+  const parseChat = async (text) => {
+    setLoading(true);
+    setProgress(0);
+
     const lines = text.split("\n");
-    const parsed = lines
-      .map((line) => {
-        const match = line.match(
-          /^(\d{2}\/\d{2}\/\d{2}),\s(.+?)\s-\s([^:]+):\s(.+)$/
-        );
-        if (match) {
-          const [day, month, year] = match[1].split("/");
-          return {
-            date: match[1], // dd/mm/yy
-            time: match[2],
-            name: match[3],
-            message: match[4],
-            dateObj: new Date(`20${year}-${month}-${day}`), // normalized Date
-          };
-        }
-        return null;
-      })
-      .filter(Boolean);
+    const parsed = [];
+    const total = lines.length;
+
+    // Process in chunks for progress updates
+    for (let i = 0; i < total; i++) {
+      const line = lines[i];
+      const match = line.match(
+        /^(\d{2}\/\d{2}\/\d{2}),\s(.+?)\s-\s([^:]+):\s(.+)$/
+      );
+      if (match) {
+        const [day, month, year] = match[1].split("/");
+        parsed.push({
+          date: match[1], // dd/mm/yy
+          time: match[2],
+          name: match[3],
+          message: match[4],
+          dateObj: new Date(`20${year}-${month}-${day}`), // normalized Date
+        });
+      }
+
+      // Update progress every 500 lines for performance
+      if (i % 500 === 0) {
+        setProgress(Math.floor((i / total) * 100));
+        await new Promise((res) => setTimeout(res, 0)); // allow UI refresh
+      }
+    }
 
     setMessages(parsed);
+    setProgress(100);
 
     if (parsed.length > 0) {
       const names = [...new Set(parsed.map((m) => m.name))];
@@ -41,6 +55,8 @@ function App() {
         endDate: parsed[parsed.length - 1].date,
       });
     }
+
+    setTimeout(() => setLoading(false), 500); // Smooth hide
   };
 
   const handleFile = (e) => {
@@ -98,8 +114,23 @@ function App() {
         />
       </label>
 
+      {/* Loader */}
+      {loading && (
+        <div className="w-full max-w-md mt-6">
+          <div className="bg-gray-300 rounded-full h-3 overflow-hidden">
+            <div
+              className="bg-blue-500 h-3 transition-all duration-300"
+              style={{ width: `${progress}%` }}
+            ></div>
+          </div>
+          <p className="text-sm text-gray-600 mt-2 text-center">
+            Processing chat... {progress}%
+          </p>
+        </div>
+      )}
+
       {/* Chat Info Card */}
-      {chatInfo && (
+      {chatInfo && !loading && (
         <div className="w-full max-w-md bg-white rounded-2xl shadow-md p-4 mt-4">
           <h2 className="text-lg font-semibold text-gray-800 mb-2">
             Chat Summary
@@ -119,8 +150,8 @@ function App() {
         </div>
       )}
 
-      {/* Search + Filters */}
-      {messages.length > 0 && (
+      {/* Filters */}
+      {!loading && messages.length > 0 && (
         <div className="w-full max-w-md mt-4 space-y-3">
           <input
             type="text"
@@ -155,70 +186,70 @@ function App() {
       )}
 
       {/* Chat Window */}
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-md p-4 mt-4 overflow-y-auto h-[70vh] border relative">
-        {filteredMessages.length === 0 ? (
-          <p className="text-gray-500 text-center">No messages found</p>
-        ) : (
-          filteredMessages.map((msg, index) => {
-            const isMe = msg.name.includes("Ayush Solanki");
-            const isMedia = msg.message.trim() === "<Media omitted>";
+      {!loading && (
+        <div className="w-full max-w-md bg-white rounded-2xl shadow-md p-4 mt-4 overflow-y-auto h-[70vh] border relative">
+          {filteredMessages.length === 0 ? (
+            <p className="text-gray-500 text-center">No messages found</p>
+          ) : (
+            filteredMessages.map((msg, index) => {
+              const isMe = msg.name.includes("Ayush Solanki");
+              const isMedia = msg.message.trim() === "<Media omitted>";
 
-            return (
-              <div
-                key={index}
-                className={`mb-4 flex ${
-                  isMe ? "justify-end" : "justify-start"
-                }`}
-              >
+              return (
                 <div
-                  className={`relative max-w-[75%] px-4 py-2 rounded-2xl text-sm leading-relaxed break-words whitespace-pre-wrap
-                    ${
-                      isMe
-                        ? "bg-blue-500 text-white rounded-br-none"
-                        : "bg-gray-200 text-gray-900 rounded-bl-none"
-                    }`}
+                  key={index}
+                  className={`mb-4 flex ${
+                    isMe ? "justify-end" : "justify-start"
+                  }`}
                 >
-                  {/* Show sender name only if not me */}
-                  {!isMe && (
-                    <p className="font-semibold text-blue-600 text-xs mb-1">
-                      {msg.name}
-                    </p>
-                  )}
+                  <div
+                    className={`relative max-w-[75%] px-4 py-2 rounded-2xl text-sm leading-relaxed break-words whitespace-pre-wrap
+                      ${
+                        isMe
+                          ? "bg-blue-500 text-white rounded-br-none"
+                          : "bg-gray-200 text-gray-900 rounded-bl-none"
+                      }`}
+                  >
+                    {!isMe && (
+                      <p className="font-semibold text-blue-600 text-xs mb-1">
+                        {msg.name}
+                      </p>
+                    )}
 
-                  {/* Message / Media Placeholder */}
-                  {isMedia ? (
-                    <div className="flex items-center gap-2 text-gray-500 italic">
-                      <span>📎</span>
-                      <span>Media File</span>
+                    {isMedia ? (
+                      <div className="flex items-center gap-2 text-gray-500 italic">
+                        <span>📎</span>
+                        <span>Media File</span>
+                      </div>
+                    ) : (
+                      <p className="text-base">{msg.message}</p>
+                    )}
+
+                    <div className="flex justify-end items-center gap-1">
+                      <p
+                        className={`text-[10px] mt-1 ${
+                          isMe ? "text-blue-100" : "text-gray-500"
+                        }`}
+                      >
+                        {msg.date}
+                      </p>
+                      <p
+                        className={`text-[10px] mt-1 ${
+                          isMe ? "text-blue-100" : "text-gray-500"
+                        }`}
+                      >
+                        {msg.time}
+                      </p>
                     </div>
-                  ) : (
-                    <p className="text-base">{msg.message}</p>
-                  )}
-
-                  {/* Timestamp */}
-                  <div className="flex justify-end items-center gap-1 ">
-                    <p
-                      className={`text-[10px] mt-1 text-right ${
-                        isMe ? "text-blue-100" : "text-gray-500"
-                      }`}
-                    >
-                      {msg.date}
-                    </p>
-                    <p
-                      className={`text-[10px] mt-1 text-right ${
-                        isMe ? "text-blue-100" : "text-gray-500"
-                      }`}
-                    >
-                      {msg.time}
-                    </p>{" "}
                   </div>
                 </div>
-              </div>
-            );
-          })
-        )}
-      </div>
-      <Footer/>
+              );
+            })
+          )}
+        </div>
+      )}
+
+      <Footer />
     </div>
   );
 }

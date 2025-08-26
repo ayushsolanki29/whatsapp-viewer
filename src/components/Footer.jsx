@@ -7,14 +7,14 @@ export default function Footer() {
       <div className="max-w-4xl mx-auto px-6 py-6 flex flex-col md:flex-row items-center justify-between gap-4">
         {/* Signature */}
         <p className="text-lg font-semibold text-center md:text-left">
-          👋 I’m <span className="font-bold"><a href="https://ayushsolanki.site"> Ayush Solanki</a></span>
+          👋 I’m{" "}
+          <span className="font-bold">
+            <a href="https://ayushsolanki.site"> Ayush Solanki</a>
+          </span>
         </p>
 
         {/* Contact Links */}
         <div className="flex gap-6 text-xl">
-     
-    
-        
           <a
             href="https://github.com/ayushsolanki29"
             target="_blank"
