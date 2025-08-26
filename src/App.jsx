@@ -1,8 +1,10 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import JSZip from "jszip";
+import Footer from "./components/Footer";
 
 function App() {
   const [messages, setMessages] = useState([]);
+  const [allMessages, setAllMessages] = useState([]); // Store all messages for filtering
   const [chatInfo, setChatInfo] = useState(null);
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -11,21 +13,17 @@ function App() {
   const [visibleMessages, setVisibleMessages] = useState(50);
   const [parsedLines, setParsedLines] = useState([]);
   const [mediaMap, setMediaMap] = useState(new Map());
+  const [participantFilter, setParticipantFilter] = useState("");
   const chatContainerRef = useRef(null);
 
-  // Parse WhatsApp exported lines incrementally
-  const parseChatIncrementally = useCallback((text, mediaFiles = new Map()) => {
+  // Parse WhatsApp exported lines
+  const parseChat = useCallback((text, mediaFiles = new Map()) => {
     setIsLoading(true);
     const lines = text.split("\n");
     const parsed = [];
     
-    // Process first 1000 lines immediately for quick display
-    const initialBatchSize = Math.min(1000, lines.length);
-    
-    // Extract media information from the chat to better match files
-    const mediaMessages = [];
-    
-    for (let i = 0; i < initialBatchSize; i++) {
+    // Extract all messages
+    for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const match = line.match(
         /^(\d{2}\/\d{2}\/\d{2}),\s(.+?)\s-\s([^:]+):\s(.+)$/
@@ -37,112 +35,74 @@ function App() {
         
         // Check if this is a media message
         if (message.trim() === "<Media omitted>" || message.includes("media")) {
-          // Store media message info for later matching
-          mediaMessages.push({
-            index: i,
-            date: match[1],
-            time: match[2],
-            name: match[3],
-            message: message,
-            dateObj: new Date(`20${year}-${month}-${day}`),
-            isMedia: true
-          });
-        } else {
-          parsed.push({
-            date: match[1],
-            time: match[2],
-            name: match[3],
-            message: message,
-            dateObj: new Date(`20${year}-${month}-${day}`),
-            isMedia: false,
-            mediaData: null
-          });
+          // WhatsApp media files typically follow patterns like:
+          // IMG-YYYYMMDD-WAXXXX.jpg, VID-YYYYMMDD-WAXXXX.mp4, etc.
+          const fullYear = `20${year}`;
+          const datePattern1 = `-${fullYear}${month}${day}`;
+          const datePattern2 = `${fullYear}${month}${day}`;
+          
+          // Try to find a matching media file
+          let matchedFile = null;
+          const mediaEntries = Array.from(mediaFiles.entries());
+          
+          for (const [filename, url] of mediaEntries) {
+            if (filename.includes(datePattern1) || filename.includes(datePattern2)) {
+              matchedFile = { filename, url };
+              break;
+            }
+          }
+          
+          // If not found by date, try to match by index (fallback)
+          if (!matchedFile) {
+            const mediaIndex = parsed.filter(m => m.isMedia).length;
+            if (mediaIndex < mediaEntries.length) {
+              matchedFile = {
+                filename: mediaEntries[mediaIndex][0],
+                url: mediaEntries[mediaIndex][1]
+              };
+            }
+          }
+          
+          mediaData = matchedFile ? { 
+            type: getMediaType(matchedFile.filename), 
+            url: matchedFile.url,
+            filename: matchedFile.filename
+          } : null;
         }
+        
+        parsed.push({
+          date: match[1],
+          time: match[2],
+          name: match[3],
+          message: message,
+          dateObj: new Date(`20${year}-${month}-${day}`),
+          isMedia: message.trim() === "<Media omitted>" || message.includes("media"),
+          mediaData: mediaData,
+          originalIndex: i // Store original index for reference
+        });
       }
     }
     
-    // Now try to match media files with media messages
-    const mediaEntries = Array.from(mediaFiles.entries());
-    
-    // First approach: try to match by date pattern (most reliable)
-    const matchedMediaMessages = mediaMessages.map((msg, index) => {
-      // WhatsApp media files typically follow patterns like:
-      // IMG-YYYYMMDD-WAXXXX.jpg, VID-YYYYMMDD-WAXXXX.mp4, etc.
-      const [day, month, year] = msg.date.split("/");
-      const fullYear = `20${year}`;
-      const datePattern1 = `-${fullYear}${month}${day}`;
-      const datePattern2 = `${fullYear}${month}${day}`;
-      
-      // Try to find a matching media file
-      let matchedFile = null;
-      
-      for (const [filename, url] of mediaEntries) {
-        if (filename.includes(datePattern1) || filename.includes(datePattern2)) {
-          matchedFile = { filename, url };
-          break;
-        }
-      }
-      
-      // If not found by date, try to match by index (fallback)
-      if (!matchedFile && index < mediaEntries.length) {
-        matchedFile = {
-          filename: mediaEntries[index][0],
-          url: mediaEntries[index][1]
-        };
-      }
-      
-      return {
-        ...msg,
-        mediaData: matchedFile ? { 
-          type: getMediaType(matchedFile.filename), 
-          url: matchedFile.url,
-          filename: matchedFile.filename
-        } : null
-      };
-    });
-    
-    // Combine regular messages and media messages
-    const allMessages = [...parsed, ...matchedMediaMessages];
-    
-    // Sort by date (since we processed them separately)
-    allMessages.sort((a, b) => a.dateObj - b.dateObj);
-    
     setParsedLines(lines);
-    setMessages(allMessages);
+    setAllMessages(parsed); // Store all messages
+    setMessages(parsed.slice(0, visibleMessages)); // Show initial batch
     setMediaMap(mediaFiles);
     
-    // Get chat info from the first and last valid messages
-    if (allMessages.length > 0) {
-      const names = [...new Set(allMessages.map((m) => m.name))];
-      
-      // Find the last message by checking from the end
-      let lastMessage = null;
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const line = lines[i];
-        const match = line.match(
-          /^(\d{2}\/\d{2}\/\d{2}),\s(.+?)\s-\s([^:]+):\s(.+)$/
-        );
-        if (match) {
-          const [day, month, year] = match[1].split("/");
-          lastMessage = {
-            date: match[1],
-            dateObj: new Date(`20${year}-${month}-${day}`),
-          };
-          break;
-        }
-      }
+    // Get chat info
+    if (parsed.length > 0) {
+      const names = [...new Set(parsed.map((m) => m.name))];
       
       setChatInfo({
         participants: names,
-        totalMessages: lines.length,
-        startDate: allMessages[0].date,
-        endDate: lastMessage ? lastMessage.date : allMessages[0].date,
+        totalMessages: parsed.length,
+        startDate: parsed[0].date,
+        endDate: parsed[parsed.length - 1].date,
         mediaCount: Array.from(mediaFiles.keys()).length
       });
     }
     
     setIsLoading(false);
-  }, []);
+  }, [visibleMessages]);
 
   // Determine media type from filename
   const getMediaType = (filename) => {
@@ -199,7 +159,7 @@ function App() {
         
         if (chatFile) {
           const chatText = await chatFile.async('text');
-          parseChatIncrementally(chatText, mediaFiles);
+          parseChat(chatText, mediaFiles);
         } else {
           alert('No chat file found in the ZIP archive. Look for a file containing "chat" in the name.');
           setIsLoading(false);
@@ -212,10 +172,50 @@ function App() {
     } else {
       // Handle regular text file
       const reader = new FileReader();
-      reader.onload = (event) => parseChatIncrementally(event.target.result);
+      reader.onload = (event) => parseChat(event.target.result);
       reader.readAsText(file);
     }
   };
+
+  // -----------------------------------------------------------------------
+  // THE FIX: Move this `useMemo` block up before the `useEffect` that uses it.
+  // Apply filters (search + date range + participant)
+  const filteredMessages = useMemo(() => {
+    if (!allMessages.length) return [];
+    
+    let result = [...allMessages];
+
+    // Apply search filter
+    if (search.trim()) {
+      const searchTerm = search.toLowerCase();
+      result = result.filter((m) =>
+        m.message.toLowerCase().includes(searchTerm) ||
+        m.name.toLowerCase().includes(searchTerm)
+      );
+    }
+
+    // Apply date filters
+    if (dateFrom) {
+      const fromDate = new Date(dateFrom);
+      result = result.filter((m) => m.dateObj >= fromDate);
+    }
+
+    if (dateTo) {
+      const toDate = new Date(dateTo);
+      toDate.setHours(23, 59, 59, 999); // Include entire end day
+      result = result.filter((m) => m.dateObj <= toDate);
+    }
+
+    // Apply participant filter
+    if (participantFilter) {
+      result = result.filter((m) => 
+        m.name.toLowerCase() === participantFilter.toLowerCase()
+      );
+    }
+
+    return result;
+  }, [allMessages, search, dateFrom, dateTo, participantFilter]);
+  // -----------------------------------------------------------------------
 
   // Load more messages when scrolling
   useEffect(() => {
@@ -225,10 +225,7 @@ function App() {
       const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
       if (scrollTop + clientHeight >= scrollHeight - 100) {
         setVisibleMessages(prev => {
-          const newCount = prev + 50;
-          if (newCount > messages.length && parsedLines.length > messages.length) {
-            loadMoreMessages(messages.length, Math.min(messages.length + 1000, parsedLines.length));
-          }
+          const newCount = Math.min(prev + 50, filteredMessages.length);
           return newCount;
         });
       }
@@ -239,91 +236,19 @@ function App() {
       container.addEventListener('scroll', handleScroll);
       return () => container.removeEventListener('scroll', handleScroll);
     }
-  }, [isLoading, messages.length, parsedLines.length]);
+  }, [isLoading, filteredMessages.length]);
 
-  // Load more messages from the parsed lines
-  const loadMoreMessages = useCallback((start, end) => {
-    setIsLoading(true);
-    
-    setTimeout(() => {
-      const newMessages = [];
-      for (let i = start; i < end; i++) {
-        const line = parsedLines[i];
-        if (!line) continue;
-        
-        const match = line.match(
-          /^(\d{2}\/\d{2}\/\d{2}),\s(.+?)\s-\s([^:]+):\s(.+)$/
-        );
-        if (match) {
-          const [day, month, year] = match[1].split("/");
-          let message = match[4];
-          
-          if (message.trim() === "<Media omitted>" || message.includes("media")) {
-            // For media messages in additional batches, we'll use a simpler matching approach
-            const mediaIndex = messages.filter(m => m.isMedia).length + newMessages.filter(m => m.isMedia).length;
-            const mediaEntries = Array.from(mediaMap.entries());
-            
-            const mediaData = mediaIndex < mediaEntries.length ? { 
-              type: getMediaType(mediaEntries[mediaIndex][0]), 
-              url: mediaEntries[mediaIndex][1],
-              filename: mediaEntries[mediaIndex][0]
-            } : null;
-            
-            newMessages.push({
-              date: match[1],
-              time: match[2],
-              name: match[3],
-              message: message,
-              dateObj: new Date(`20${year}-${month}-${day}`),
-              isMedia: true,
-              mediaData: mediaData
-            });
-          } else {
-            newMessages.push({
-              date: match[1],
-              time: match[2],
-              name: match[3],
-              message: message,
-              dateObj: new Date(`20${year}-${month}-${day}`),
-              isMedia: false,
-              mediaData: null
-            });
-          }
-        }
-      }
-      
-      setMessages(prev => [...prev, ...newMessages]);
-      setIsLoading(false);
-    }, 0);
-  }, [parsedLines, mediaMap, messages]);
-
-  // Apply filters (search + date range)
-  const filteredMessages = useMemo(() => {
-    let result = messages.slice(0, visibleMessages);
-
-    if (search.trim()) {
-      result = result.filter((m) =>
-        m.message.toLowerCase().includes(search.toLowerCase())
-      );
-    }
-
-    if (dateFrom) {
-      const fromDate = new Date(dateFrom);
-      result = result.filter((m) => m.dateObj >= fromDate);
-    }
-
-    if (dateTo) {
-      const toDate = new Date(dateTo);
-      result = result.filter((m) => m.dateObj <= toDate);
-    }
-
-    return result;
-  }, [messages, search, dateFrom, dateTo, visibleMessages]);
+  // Update visible messages when filters change
+  useEffect(() => {
+    setMessages(filteredMessages.slice(0, visibleMessages));
+  }, [filteredMessages, visibleMessages]);
 
   const resetFilters = () => {
     setSearch("");
     setDateFrom("");
     setDateTo("");
+    setParticipantFilter("");
+    setVisibleMessages(50);
   };
 
   // Clean up object URLs when component unmounts
@@ -391,6 +316,26 @@ function App() {
           </a>
         );
     }
+  };
+
+  // Message preview component
+  const MessagePreview = ({ message, searchTerm }) => {
+    if (!searchTerm) return <p className="text-base">{message}</p>;
+    
+    const index = message.toLowerCase().indexOf(searchTerm.toLowerCase());
+    if (index === -1) return <p className="text-base">{message}</p>;
+    
+    const before = message.substring(0, index);
+    const match = message.substring(index, index + searchTerm.length);
+    const after = message.substring(index + searchTerm.length);
+    
+    return (
+      <p className="text-base">
+        {before}
+        <span className="bg-yellow-300 font-semibold">{match}</span>
+        {after}
+      </p>
+    );
   };
 
   // Skeleton loader component
@@ -463,11 +408,11 @@ function App() {
       )}
 
       {/* Search + Filters */}
-      {messages.length > 0 && (
+      {allMessages.length > 0 && (
         <div className="w-full max-w-md mt-4 space-y-3">
           <input
             type="text"
-            placeholder="Search messages..."
+            placeholder="Search messages or names..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full px-4 py-2 rounded-full border border-gray-300 focus:ring-2 focus:ring-blue-400 focus:outline-none"
@@ -479,42 +424,66 @@ function App() {
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
               className="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-400 focus:outline-none"
+              placeholder="From date"
             />
             <input
               type="date"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
               className="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-400 focus:outline-none"
+              placeholder="To date"
             />
           </div>
 
-          <button
-            onClick={resetFilters}
-            className="w-full bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300 transition"
-          >
-            Reset Filters
-          </button>
+          {chatInfo && chatInfo.participants.length > 1 && (
+            <select
+              value={participantFilter}
+              onChange={(e) => setParticipantFilter(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-400 focus:outline-none"
+            >
+              <option value="">All participants</option>
+              {chatInfo.participants.map((participant, index) => (
+                <option key={index} value={participant}>
+                  {participant}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              onClick={resetFilters}
+              className="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300 transition"
+            >
+              Reset Filters
+            </button>
+            <div className="flex-1 bg-blue-100 text-blue-700 py-2 rounded-lg text-center">
+              Showing: {filteredMessages.length} of {allMessages.length}
+            </div>
+          </div>
         </div>
       )}
 
       {/* Chat Window */}
-      {isLoading && messages.length === 0 ? (
+      {isLoading && allMessages.length === 0 ? (
         <SkeletonLoader />
       ) : (
         <div 
           ref={chatContainerRef}
           className="w-full max-w-md bg-white rounded-2xl shadow-md p-4 mt-4 overflow-y-auto h-[70vh] border relative"
         >
-          {filteredMessages.length === 0 ? (
-            <p className="text-gray-500 text-center">No messages found</p>
+          {messages.length === 0 ? (
+            <p className="text-gray-500 text-center">
+              {allMessages.length > 0 ? "No messages match your filters" : "Upload a chat file to begin"}
+            </p>
           ) : (
             <>
-              {filteredMessages.map((msg, index) => {
+              {messages.map((msg, index) => {
                 const isMe = msg.name.includes("Ayush Solanki");
 
                 return (
                   <div
-                    key={index}
+                    key={`${msg.originalIndex}-${index}`}
                     className={`mb-4 flex ${
                       isMe ? "justify-end" : "justify-start"
                     }`}
@@ -540,7 +509,7 @@ function App() {
                           <MediaRenderer mediaData={msg.mediaData} />
                         </div>
                       ) : (
-                        <p className="text-base">{msg.message}</p>
+                        <MessagePreview message={msg.message} searchTerm={search} />
                       )}
 
                       {/* Timestamp */}
@@ -564,15 +533,21 @@ function App() {
                   </div>
                 );
               })}
-              {isLoading && (
+              {visibleMessages < filteredMessages.length && (
                 <div className="flex justify-center py-4">
-                  <div className="animate-pulse text-gray-500">Loading more messages...</div>
+                  <button 
+                    onClick={() => setVisibleMessages(prev => Math.min(prev + 50, filteredMessages.length))}
+                    className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition"
+                  >
+                    Load more messages ({filteredMessages.length - visibleMessages} remaining)
+                  </button>
                 </div>
               )}
             </>
           )}
         </div>
       )}
+
     </div>
   );
 }
