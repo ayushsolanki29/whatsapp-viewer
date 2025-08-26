@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import Footer from "./components/Footer";
 
 function App() {
   const [messages, setMessages] = useState([]);
@@ -196,28 +197,28 @@ function App() {
 
                   {/* Timestamp */}
                   <div className="flex justify-end items-center gap-1 ">
-
-                 
-                  <p
-                    className={`text-[10px] mt-1 text-right ${
-                      isMe ? "text-blue-100" : "text-gray-500"
-                    }`}
-                  >
-                    {msg.date}
-                  </p>
-                  <p
-                    className={`text-[10px] mt-1 text-right ${
-                      isMe ? "text-blue-100" : "text-gray-500"
-                    }`}
-                  >
-                    {msg.time}
-                  </p> </div>
+                    <p
+                      className={`text-[10px] mt-1 text-right ${
+                        isMe ? "text-blue-100" : "text-gray-500"
+                      }`}
+                    >
+                      {msg.date}
+                    </p>
+                    <p
+                      className={`text-[10px] mt-1 text-right ${
+                        isMe ? "text-blue-100" : "text-gray-500"
+                      }`}
+                    >
+                      {msg.time}
+                    </p>{" "}
+                  </div>
                 </div>
               </div>
             );
           })
         )}
       </div>
+      <Footer/>
     </div>
   );
 }
