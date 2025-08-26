@@ -1,39 +1,35 @@
-import { FaGithub, FaLinkedin, FaEnvelope } from "react-icons/fa";
+// src/components/Footer.jsx
+import { FaEnvelope, FaPhoneAlt, FaLinkedin, FaGithub } from "react-icons/fa";
 
-function Footer() {
+export default function Footer() {
   return (
-    <footer className="w-full bg-gray-900 text-gray-300 py-6 mt-6">
-      <div className="max-w-4xl mx-auto text-center space-y-3">
-        <p className="text-sm">
-          Built by <span className="font-semibold text-white">Ayush Solanki</span>
+    <footer className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 text-white mt-6 rounded-t-2xl shadow-lg">
+      <div className="max-w-4xl mx-auto px-6 py-6 flex flex-col md:flex-row items-center justify-between gap-4">
+        {/* Signature */}
+        <p className="text-lg font-semibold text-center md:text-left">
+          👋 I’m <span className="font-bold"><a href="https://ayushsolanki.site"> Ayush Solanki</a></span>
         </p>
-        <div className="flex justify-center gap-6">
+
+        {/* Contact Links */}
+        <div className="flex gap-6 text-xl">
+     
+    
+        
           <a
-            href="mailto:ayush@example.com"
-            className="hover:text-white transition"
-          >
-            <FaEnvelope size={20} />
-          </a>
-          <a
-            href="https://github.com/ayush"
+            href="https://github.com/ayushsolanki29"
             target="_blank"
-            className="hover:text-white transition"
+            rel="noreferrer"
+            className="hover:text-yellow-300 transition"
           >
-            <FaGithub size={20} />
-          </a>
-          <a
-            href="https://linkedin.com/in/ayush"
-            target="_blank"
-            className="hover:text-white transition"
-          >
-            <FaLinkedin size={20} />
+            <FaGithub />
           </a>
         </div>
-        <p className="text-xs text-gray-500">
-          © {new Date().getFullYear()} Ayush Solanki. All rights reserved.
-        </p>
+      </div>
+
+      {/* Bottom note */}
+      <div className="text-center text-sm py-2 bg-blue-700/70">
+        © {new Date().getFullYear()} Ayush Solanki. All rights reserved.
       </div>
     </footer>
   );
 }
-export default Footer;
