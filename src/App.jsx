@@ -1,5 +1,4 @@
-import { useState, useMemo } from "react";
-import Footer from "./components/Footer";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 
 function App() {
   const [messages, setMessages] = useState([]);
@@ -7,20 +6,21 @@ function App() {
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [visibleMessages, setVisibleMessages] = useState(50);
+  const [parsedLines, setParsedLines] = useState([]);
+  const chatContainerRef = useRef(null);
 
-  // Parse WhatsApp exported lines with progress
-  const parseChat = async (text) => {
-    setLoading(true);
-    setProgress(0);
-
+  // Parse WhatsApp exported lines incrementally
+  const parseChatIncrementally = useCallback((text) => {
+    setIsLoading(true);
     const lines = text.split("\n");
     const parsed = [];
-    const total = lines.length;
-
-    // Process in chunks for progress updates
-    for (let i = 0; i < total; i++) {
+    
+    // Process first 1000 lines immediately for quick display
+    const initialBatchSize = Math.min(1000, lines.length);
+    
+    for (let i = 0; i < initialBatchSize; i++) {
       const line = lines[i];
       const match = line.match(
         /^(\d{2}\/\d{2}\/\d{2}),\s(.+?)\s-\s([^:]+):\s(.+)$/
@@ -35,41 +35,113 @@ function App() {
           dateObj: new Date(`20${year}-${month}-${day}`), // normalized Date
         });
       }
-
-      // Update progress every 500 lines for performance
-      if (i % 500 === 0) {
-        setProgress(Math.floor((i / total) * 100));
-        await new Promise((res) => setTimeout(res, 0)); // allow UI refresh
-      }
     }
-
+    
+    setParsedLines(lines);
     setMessages(parsed);
-    setProgress(100);
-
+    
+    // Get chat info from the first and last valid messages
     if (parsed.length > 0) {
       const names = [...new Set(parsed.map((m) => m.name))];
+      
+      // Find the last message by checking from the end
+      let lastMessage = null;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        const match = line.match(
+          /^(\d{2}\/\d{2}\/\d{2}),\s(.+?)\s-\s([^:]+):\s(.+)$/
+        );
+        if (match) {
+          const [day, month, year] = match[1].split("/");
+          lastMessage = {
+            date: match[1],
+            dateObj: new Date(`20${year}-${month}-${day}`),
+          };
+          break;
+        }
+      }
+      
       setChatInfo({
         participants: names,
-        totalMessages: parsed.length,
+        totalMessages: lines.length, // This is an estimate
         startDate: parsed[0].date,
-        endDate: parsed[parsed.length - 1].date,
+        endDate: lastMessage ? lastMessage.date : parsed[0].date,
       });
     }
+    
+    setIsLoading(false);
+  }, []);
 
-    setTimeout(() => setLoading(false), 500); // Smooth hide
-  };
+  // Load more messages when scrolling
+  useEffect(() => {
+    const handleScroll = () => {
+      if (!chatContainerRef.current || isLoading) return;
+      
+      const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
+      if (scrollTop + clientHeight >= scrollHeight - 100) {
+        // Load more messages when near bottom
+        setVisibleMessages(prev => {
+          const newCount = prev + 50;
+          // If we need to parse more lines to get more messages
+          if (newCount > messages.length && parsedLines.length > messages.length) {
+            loadMoreMessages(messages.length, Math.min(messages.length + 1000, parsedLines.length));
+          }
+          return newCount;
+        });
+      }
+    };
+
+    const container = chatContainerRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll);
+      return () => container.removeEventListener('scroll', handleScroll);
+    }
+  }, [isLoading, messages.length, parsedLines.length]);
+
+  // Load more messages from the parsed lines
+  const loadMoreMessages = useCallback((start, end) => {
+    setIsLoading(true);
+    
+    // Use setTimeout to avoid blocking the UI thread
+    setTimeout(() => {
+      const newMessages = [];
+      for (let i = start; i < end; i++) {
+        const line = parsedLines[i];
+        if (!line) continue;
+        
+        const match = line.match(
+          /^(\d{2}\/\d{2}\/\d{2}),\s(.+?)\s-\s([^:]+):\s(.+)$/
+        );
+        if (match) {
+          const [day, month, year] = match[1].split("/");
+          newMessages.push({
+            date: match[1],
+            time: match[2],
+            name: match[3],
+            message: match[4],
+            dateObj: new Date(`20${year}-${month}-${day}`),
+          });
+        }
+      }
+      
+      setMessages(prev => [...prev, ...newMessages]);
+      setIsLoading(false);
+    }, 0);
+  }, [parsedLines]);
 
   const handleFile = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    
+    setIsLoading(true);
     const reader = new FileReader();
-    reader.onload = (event) => parseChat(event.target.result);
+    reader.onload = (event) => parseChatIncrementally(event.target.result);
     reader.readAsText(file);
   };
 
   // Apply filters (search + date range)
   const filteredMessages = useMemo(() => {
-    let result = messages;
+    let result = messages.slice(0, visibleMessages);
 
     if (search.trim()) {
       result = result.filter((m) =>
@@ -88,13 +160,34 @@ function App() {
     }
 
     return result;
-  }, [messages, search, dateFrom, dateTo]);
+  }, [messages, search, dateFrom, dateTo, visibleMessages]);
 
   const resetFilters = () => {
     setSearch("");
     setDateFrom("");
     setDateTo("");
   };
+
+  // Skeleton loader component
+  const SkeletonLoader = () => (
+    <div className="w-full max-w-md bg-white rounded-2xl shadow-md p-4 mt-4 overflow-y-auto h-[70vh] border relative">
+      {Array.from({ length: 15 }).map((_, index) => (
+        <div key={index} className={`mb-4 flex ${index % 3 === 0 ? "justify-end" : "justify-start"}`}>
+          <div className={`relative max-w-[75%] px-4 py-2 rounded-2xl text-sm leading-relaxed break-words whitespace-pre-wrap
+            ${index % 3 === 0 ? "bg-gray-300" : "bg-gray-200"}`}>
+            {index % 3 !== 0 && (
+              <div className="h-3 w-20 bg-gray-400 rounded mb-2"></div>
+            )}
+            <div className="h-4 w-full bg-gray-400 rounded mb-2"></div>
+            <div className="h-4 w-3/4 bg-gray-400 rounded"></div>
+            <div className="flex justify-end mt-2">
+              <div className="h-2 w-10 bg-gray-400 rounded"></div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col items-center p-4 font-sans">
@@ -114,23 +207,8 @@ function App() {
         />
       </label>
 
-      {/* Loader */}
-      {loading && (
-        <div className="w-full max-w-md mt-6">
-          <div className="bg-gray-300 rounded-full h-3 overflow-hidden">
-            <div
-              className="bg-blue-500 h-3 transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            ></div>
-          </div>
-          <p className="text-sm text-gray-600 mt-2 text-center">
-            Processing chat... {progress}%
-          </p>
-        </div>
-      )}
-
       {/* Chat Info Card */}
-      {chatInfo && !loading && (
+      {chatInfo && (
         <div className="w-full max-w-md bg-white rounded-2xl shadow-md p-4 mt-4">
           <h2 className="text-lg font-semibold text-gray-800 mb-2">
             Chat Summary
@@ -141,7 +219,7 @@ function App() {
           </p>
           <p className="text-sm text-gray-600">
             <span className="font-semibold">Total Messages:</span>{" "}
-            {chatInfo.totalMessages}
+            {chatInfo.totalMessages.toLocaleString()}
           </p>
           <p className="text-sm text-gray-600">
             <span className="font-semibold">From:</span> {chatInfo.startDate} →{" "}
@@ -150,8 +228,8 @@ function App() {
         </div>
       )}
 
-      {/* Filters */}
-      {!loading && messages.length > 0 && (
+      {/* Search + Filters */}
+      {messages.length > 0 && (
         <div className="w-full max-w-md mt-4 space-y-3">
           <input
             type="text"
@@ -186,70 +264,83 @@ function App() {
       )}
 
       {/* Chat Window */}
-      {!loading && (
-        <div className="w-full max-w-md bg-white rounded-2xl shadow-md p-4 mt-4 overflow-y-auto h-[70vh] border relative">
+      {isLoading && messages.length === 0 ? (
+        <SkeletonLoader />
+      ) : (
+        <div 
+          ref={chatContainerRef}
+          className="w-full max-w-md bg-white rounded-2xl shadow-md p-4 mt-4 overflow-y-auto h-[70vh] border relative"
+        >
           {filteredMessages.length === 0 ? (
             <p className="text-gray-500 text-center">No messages found</p>
           ) : (
-            filteredMessages.map((msg, index) => {
-              const isMe = msg.name.includes("Ayush Solanki");
-              const isMedia = msg.message.trim() === "<Media omitted>";
+            <>
+              {filteredMessages.map((msg, index) => {
+                const isMe = msg.name.includes("Ayush Solanki");
+                const isMedia = msg.message.trim() === "<Media omitted>";
 
-              return (
-                <div
-                  key={index}
-                  className={`mb-4 flex ${
-                    isMe ? "justify-end" : "justify-start"
-                  }`}
-                >
+                return (
                   <div
-                    className={`relative max-w-[75%] px-4 py-2 rounded-2xl text-sm leading-relaxed break-words whitespace-pre-wrap
-                      ${
-                        isMe
-                          ? "bg-blue-500 text-white rounded-br-none"
-                          : "bg-gray-200 text-gray-900 rounded-bl-none"
-                      }`}
+                    key={index}
+                    className={`mb-4 flex ${
+                      isMe ? "justify-end" : "justify-start"
+                    }`}
                   >
-                    {!isMe && (
-                      <p className="font-semibold text-blue-600 text-xs mb-1">
-                        {msg.name}
-                      </p>
-                    )}
+                    <div
+                      className={`relative max-w-[75%] px-4 py-2 rounded-2xl text-sm leading-relaxed break-words whitespace-pre-wrap
+                        ${
+                          isMe
+                            ? "bg-blue-500 text-white rounded-br-none"
+                            : "bg-gray-200 text-gray-900 rounded-bl-none"
+                        }`}
+                    >
+                      {/* Show sender name only if not me */}
+                      {!isMe && (
+                        <p className="font-semibold text-blue-600 text-xs mb-1">
+                          {msg.name}
+                        </p>
+                      )}
 
-                    {isMedia ? (
-                      <div className="flex items-center gap-2 text-gray-500 italic">
-                        <span>📎</span>
-                        <span>Media File</span>
+                      {/* Message / Media Placeholder */}
+                      {isMedia ? (
+                        <div className="flex items-center gap-2 text-gray-500 italic">
+                          <span>📎</span>
+                          <span>Media File</span>
+                        </div>
+                      ) : (
+                        <p className="text-base">{msg.message}</p>
+                      )}
+
+                      {/* Timestamp */}
+                      <div className="flex justify-end items-center gap-1">
+                        <p
+                          className={`text-[10px] mt-1 text-right ${
+                            isMe ? "text-blue-100" : "text-gray-500"
+                          }`}
+                        >
+                          {msg.date}
+                        </p>
+                        <p
+                          className={`text-[10px] mt-1 text-right ${
+                            isMe ? "text-blue-100" : "text-gray-500"
+                          }`}
+                        >
+                          {msg.time}
+                        </p>
                       </div>
-                    ) : (
-                      <p className="text-base">{msg.message}</p>
-                    )}
-
-                    <div className="flex justify-end items-center gap-1">
-                      <p
-                        className={`text-[10px] mt-1 ${
-                          isMe ? "text-blue-100" : "text-gray-500"
-                        }`}
-                      >
-                        {msg.date}
-                      </p>
-                      <p
-                        className={`text-[10px] mt-1 ${
-                          isMe ? "text-blue-100" : "text-gray-500"
-                        }`}
-                      >
-                        {msg.time}
-                      </p>
                     </div>
                   </div>
+                );
+              })}
+              {isLoading && (
+                <div className="flex justify-center py-4">
+                  <div className="animate-pulse text-gray-500">Loading more messages...</div>
                 </div>
-              );
-            })
+              )}
+            </>
           )}
         </div>
       )}
-
-      <Footer />
     </div>
   );
 }
